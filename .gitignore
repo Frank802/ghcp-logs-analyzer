@@ -1,0 +1,32 @@
+# Build results
+bin/
+obj/
+out/
+
+# User-specific files
+*.user
+*.userosscache
+*.suo
+
+# VS Code
+.vscode/
+
+# Rider
+.idea/
+
+# NuGet
+*.nupkg
+packages/
+
+# Logs and temp files
+*.log
+logs/
+sample-logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Secrets - DO NOT COMMIT tokens
+appsettings.*.json
+!appsettings.json
