@@ -63,12 +63,12 @@ if (string.IsNullOrEmpty(githubToken))
 
 // Scan log files
 Console.WriteLine($"Scanning logs in: {logsFolder}");
-var scanner = new LogScanner();
-List<LogFileEntry> logFiles;
+ILogSource logSource = new FileSystemLogSource();
+List<LogEntry> logEntries;
 
 try
 {
-    logFiles = scanner.ScanFolder(logsFolder).ToList();
+    logEntries = await logSource.GetLogsAsync(logsFolder).ToListAsync();
 }
 catch (DirectoryNotFoundException ex)
 {
@@ -76,21 +76,21 @@ catch (DirectoryNotFoundException ex)
     return 1;
 }
 
-if (logFiles.Count == 0)
+if (logEntries.Count == 0)
 {
     Console.WriteLine("No log files found (.log, .txt)");
     return 0;
 }
 
-Console.WriteLine($"Found {logFiles.Count} log file(s)");
+Console.WriteLine($"Found {logEntries.Count} log file(s)");
 
 // Initialize Copilot client
 await using var client = new CopilotClient();
 await client.StartAsync();
 
 // Build the analysis prompt with all log contents
-var logContents = string.Join("\n\n---\n\n", logFiles.Select(l =>
-    $"### File: {l.FileName}\n```\n{l.Content}\n```"));
+var logContents = string.Join("\n\n---\n\n", logEntries.Select(l =>
+    $"### File: {l.Name}\n```\n{l.Content}\n```"));
 
 var systemPrompt = $"""
     You are a log analysis assistant. Your task is to:
