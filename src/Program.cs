@@ -156,7 +156,8 @@ session.On(evt =>
             if (toolName.Contains("issue", StringComparison.OrdinalIgnoreCase))
             {
                 Console.WriteLine($"  [Tool] {toolName}");
-                if (toolName.Contains("create", StringComparison.OrdinalIgnoreCase))
+                if (toolName.Contains("create", StringComparison.OrdinalIgnoreCase) ||
+                    toolName.Contains("write", StringComparison.OrdinalIgnoreCase))
                 {
                     issuesCreated++;
                 }
