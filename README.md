@@ -35,10 +35,11 @@ Create `src/appsettings.Local.json` (git-ignored):
 {
   "GitHub": {
     "Token": "ghp_your_personal_access_token",
-    "DefaultRepository": "owner/repo"
+    "TargetRepository": "owner/repo"
   },
   "LogAnalysis": {
-    "LogsFolder": "./logs"
+    "LogsFolder": "./logs",
+    "SupportedExtensions": [ ".log", ".txt" ]
   }
 }
 ```
@@ -59,10 +60,10 @@ cd src
 dotnet run
 
 # Override with command-line arguments
-dotnet run -- <logs-folder> <owner/repo>
+dotnet run -- <owner/repo> [logs-folder]
 
 # Example
-dotnet run -- ../sample-logs Frank802/my-app
+dotnet run -- Frank802/my-app ../sample-logs
 ```
 
 ## Configuration Priority
@@ -70,7 +71,53 @@ dotnet run -- ../sample-logs Frank802/my-app
 1. Command-line arguments (highest)
 2. `appsettings.Local.json`
 3. `appsettings.json`
-4. `GITHUB_TOKEN` environment variable
+4. Environment variables (`GITHUB_TOKEN`, `GITHUB_TARGET_REPOSITORY`)
+
+## Running with Docker
+
+### Build the Image
+
+```bash
+cd src
+docker build -t ghcp-logs-analyzer .
+```
+
+### Run the Container
+
+```bash
+docker run --rm \
+  -v /path/to/your/logs:/logs \
+  -v ~/.config/github-copilot:/root/.config/github-copilot:ro \
+  -e GITHUB_TOKEN=ghp_your_personal_access_token \
+  -e GITHUB_TARGET_REPOSITORY=owner/repo \
+  ghcp-logs-analyzer
+```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` scope |
+| `GITHUB_TARGET_REPOSITORY` | Yes | Target repository (e.g., `owner/repo`) |
+
+### Volume Mounts
+
+| Host Path | Container Path | Purpose |
+|-----------|----------------|---------|
+| `/path/to/your/logs` | `/logs` | Log files to analyze |
+| `~/.config/github-copilot` | `/root/.config/github-copilot` | Copilot CLI credentials (read-only) |
+
+### Example with Command-Line Arguments
+
+```bash
+docker run --rm \
+  -v /path/to/logs:/logs \
+  -v ~/.config/github-copilot:/root/.config/github-copilot:ro \
+  -e GITHUB_TOKEN=ghp_your_token \
+  ghcp-logs-analyzer Frank802/my-app /logs
+```
+
+> **Note**: You must authenticate the GitHub Copilot CLI on your host machine first (`github-copilot auth`), then mount the credentials into the container.
 
 ## How It Works
 
@@ -88,6 +135,8 @@ ghcp-logs-analyzer/
 │   ├── LogScanner.cs           # Log file enumeration service
 │   ├── appsettings.json        # Default configuration template
 │   ├── appsettings.Local.json  # Local secrets (git-ignored)
+│   ├── Dockerfile              # Docker container definition
+│   ├── .dockerignore           # Docker build exclusions
 │   └── GhcpLogsAnalyzer.csproj # Project file
 ├── sample-logs/                # Sample log files for testing
 └── README.md

@@ -10,47 +10,50 @@ var configuration = new ConfigurationBuilder()
     .AddEnvironmentVariables()
     .Build();
 
-// Get GitHub token (appsettings.json -> GITHUB_TOKEN env var)
 var githubToken = configuration["GitHub:Token"];
-if (string.IsNullOrEmpty(githubToken))
+if (string.IsNullOrEmpty(githubToken) || githubToken == "YOUR_GITHUB_TOKEN")
 {
     githubToken = Environment.GetEnvironmentVariable("GITHUB_TOKEN");
 }
 
-// Get default repository from config
-var defaultRepo = configuration["GitHub:DefaultRepository"];
+var defaultRepo = configuration["GitHub:TargetRepository"];
+if(string.IsNullOrEmpty(defaultRepo) || defaultRepo == "owner/repo")
+{
+    defaultRepo = Environment.GetEnvironmentVariable("GITHUB_TARGET_REPOSITORY");
+}
+
 var defaultLogsFolder = configuration["LogAnalysis:LogsFolder"] ?? "./logs";
 
 // Parse command line arguments (override config if provided)
-string logsFolder;
 string targetRepo;
+string logsFolder;
 
 if (args.Length >= 2)
 {
-    logsFolder = args[0];
-    targetRepo = args[1];
+    targetRepo = args[0];
+    logsFolder = args[1];
 }
 else if (args.Length == 1)
 {
-    logsFolder = args[0];
-    targetRepo = defaultRepo ?? "";
+    targetRepo = args[0];
+    logsFolder = defaultLogsFolder;
 }
 else
 {
-    logsFolder = defaultLogsFolder;
     targetRepo = defaultRepo ?? "";
+    logsFolder = defaultLogsFolder;
 }
 
 // Validate required settings
 if (string.IsNullOrEmpty(targetRepo))
 {
-    Console.WriteLine("Usage: GhcpLogsAnalyzer [logs-folder] [owner/repo]");
-    Console.WriteLine("Example: GhcpLogsAnalyzer ./logs octocat/my-app");
+    Console.WriteLine("Usage: GhcpLogsAnalyzer <owner/repo> [logs-folder]");
+    Console.WriteLine("Example: GhcpLogsAnalyzer octocat/my-app ./logs");
     Console.WriteLine();
     Console.WriteLine("Configuration sources (in priority order):");
     Console.WriteLine("  1. Command line arguments");
     Console.WriteLine("  2. appsettings.json");
-    Console.WriteLine("  3. Environment variables (GITHUB_TOKEN)");
+    Console.WriteLine("  3. Environment variables (GITHUB_TOKEN, GITHUB_TARGET_REPOSITORY)");
     return 1;
 }
 
