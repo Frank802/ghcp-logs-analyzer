@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ghcp-logs-analyzer
+  # Apply this to the target app's namespace
+  # namespace: <your-app-namespace>
+type: Opaque
+stringData:
+  github-token: "YOUR_GITHUB_TOKEN"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ghcp-logs-analyzer
+  # Apply this to the target app's namespace
+  # namespace: <your-app-namespace>
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: ghcp-logs-analyzer
+    spec:
+      serviceAccountName: ghcp-logs-analyzer
+      automountServiceAccountToken: true
+      restartPolicy: Never
+      containers:
+        - name: analyzer
+          image: ghcp-logs-analyzer:latest
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ghcp-logs-analyzer
+                  key: github-token
+            - name: GITHUB_TARGET_REPOSITORY
+              value: "owner/repo"
+            - name: LogSource
+              value: "Kubernetes"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi

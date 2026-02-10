@@ -1,0 +1,34 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ghcp-logs-analyzer
+  # Apply this to the target app's namespace
+  # namespace: <your-app-namespace>
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: ghcp-logs-analyzer
+  # Apply this to the target app's namespace
+  # namespace: <your-app-namespace>
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ghcp-logs-analyzer
+  # Apply this to the target app's namespace
+  # namespace: <your-app-namespace>
+subjects:
+  - kind: ServiceAccount
+    name: ghcp-logs-analyzer
+roleRef:
+  kind: Role
+  name: ghcp-logs-analyzer
+  apiGroup: rbac.authorization.k8s.io

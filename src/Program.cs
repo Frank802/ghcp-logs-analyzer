@@ -64,31 +64,56 @@ if (string.IsNullOrEmpty(githubToken))
     return 1;
 }
 
-// Scan log files
-Console.WriteLine($"Scanning logs in: {logsFolder}");
-ILogSource logSource = new FileSystemLogSource();
+// Determine log source
+var logSourceType = configuration["LogSource"] ?? "FileSystem";
+ILogSource logSource;
+string logLocation;
+
+if (string.Equals(logSourceType, "Kubernetes", StringComparison.OrdinalIgnoreCase))
+{
+    var sinceSeconds = int.TryParse(configuration["Kubernetes:SinceSeconds"], out var s) ? s : 300;
+    var tailLines = int.TryParse(configuration["Kubernetes:TailLines"], out var t) ? t : 1000;
+    logSource = new KubernetesLogSource(sinceSeconds, tailLines);
+    logLocation = configuration["Kubernetes:LabelSelector"] ?? "";
+    Console.WriteLine("Log source: Kubernetes (pod logs)");
+}
+else
+{
+    logSource = new FileSystemLogSource();
+    logLocation = logsFolder;
+    Console.WriteLine($"Log source: FileSystem — scanning: {logsFolder}");
+}
+
 List<LogEntry> logEntries;
 
 try
 {
-    logEntries = await logSource.GetLogsAsync(logsFolder).ToListAsync();
+    logEntries = await logSource.GetLogsAsync(logLocation).ToListAsync();
 }
 catch (DirectoryNotFoundException ex)
 {
     Console.Error.WriteLine($"Error: {ex.Message}");
     return 1;
 }
+catch (k8s.Autorest.HttpOperationException ex)
+{
+    Console.Error.WriteLine($"Kubernetes API error: {ex.Response.StatusCode} — {ex.Message}");
+    return 1;
+}
 
 if (logEntries.Count == 0)
 {
-    Console.WriteLine("No log files found (.log, .txt)");
+    Console.WriteLine("No log entries found.");
     return 0;
 }
 
-Console.WriteLine($"Found {logEntries.Count} log file(s)");
+Console.WriteLine($"Found {logEntries.Count} log source(s)");
 
 // Initialize Copilot client
-await using var client = new CopilotClient();
+await using var client = new CopilotClient( new CopilotClientOptions
+{
+    CliArgs = new[] {"--yolo", "--enable-all-github-mcp-tools"}
+});
 await client.StartAsync();
 
 // Build the analysis prompt with all log contents
@@ -106,6 +131,7 @@ var systemPrompt = $"""
     - Include the error message, stack trace (if available), and file name in the body
     - Add the label "bug" if possible
     - Group related errors into a single issue
+    - Once the issue is created, assign it to Copilot
     
     Repository: {targetRepo}
     """;
