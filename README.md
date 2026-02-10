@@ -7,6 +7,7 @@ A .NET 10 console application that analyzes log files for errors and automatical
 - **File system source**: Scans a folder for `.log` and `.txt` files
 - **Kubernetes source**: Reads live container logs from running pods in the same namespace — ideal for troubleshooting a running app on K8s
 - Uses GitHub Copilot SDK with AI-powered analysis to identify errors, exceptions, and critical issues
+- Configurable AI model (defaults to `claude-sonnet-4.5`)
 - Automatically creates GitHub issues via the GitHub MCP Server
 - Checks for duplicate issues before creating new ones
 - Supports configuration via `appsettings.json`, environment variables, or command-line arguments
@@ -36,7 +37,8 @@ Create `src/appsettings.Local.json` (git-ignored):
 {
   "GitHub": {
     "Token": "ghp_your_personal_access_token",
-    "TargetRepository": "owner/repo"
+    "TargetRepository": "owner/repo",
+    "Model": "claude-sonnet-4.5"
   },
   "LogSource": "FileSystem",
   "LogAnalysis": {
@@ -126,6 +128,7 @@ docker run --rm \
 |----------|----------|-------------|
 | `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` scope |
 | `GITHUB_TARGET_REPOSITORY` | Yes | Target repository (e.g., `owner/repo`) |
+| `GitHub__Model` | No | AI model to use (default: `claude-sonnet-4.5`) |
 | `LogSource` | No | `FileSystem` (default) or `Kubernetes` |
 | `Kubernetes__LabelSelector` | No | K8s label selector to filter pods (e.g., `app=myservice`) |
 | `Kubernetes__SinceSeconds` | No | Only read logs from the last N seconds (default: `300`) |

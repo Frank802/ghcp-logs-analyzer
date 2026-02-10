@@ -23,6 +23,7 @@ if(string.IsNullOrEmpty(defaultRepo) || defaultRepo == "owner/repo")
 }
 
 var defaultLogsFolder = configuration["LogAnalysis:LogsFolder"] ?? "./logs";
+var model = configuration["GitHub:Model"] ?? "claude-sonnet-4.5";
 
 // Parse command line arguments (override config if provided)
 string targetRepo;
@@ -145,7 +146,7 @@ var userPrompt = $"""
 // Create session with GitHub MCP server
 await using var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Model = "gpt-4o",
+    Model = model,
     SystemMessage = new SystemMessageConfig
     {
         Mode = SystemMessageMode.Append,
