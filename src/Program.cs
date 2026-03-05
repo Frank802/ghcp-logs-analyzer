@@ -111,7 +111,7 @@ if (logEntries.Count == 0)
 Console.WriteLine($"Found {logEntries.Count} log source(s)");
 
 // Initialize Copilot client
-await using var client = new CopilotClient( new CopilotClientOptions
+await using var client = new CopilotClient(new CopilotClientOptions
 {
     CliArgs = new[] {"--yolo", "--enable-all-github-mcp-tools"}
 });
@@ -132,7 +132,7 @@ var systemPrompt = $"""
     - Include the error message, stack trace (if available), and file name in the body
     - Add the label "bug" if possible
     - Group related errors into a single issue
-    - Once the issue is created, assign it to Copilot
+    - Once the issue is created, assign it to Copilot Coding Agent
     
     Repository: {targetRepo}
     """;
