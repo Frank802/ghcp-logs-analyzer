@@ -22,9 +22,10 @@ if(string.IsNullOrEmpty(defaultRepo) || defaultRepo == "owner/repo")
     defaultRepo = Environment.GetEnvironmentVariable("GITHUB_TARGET_REPOSITORY");
 }
 
-var defaultLogsFolder = configuration["LogAnalysis:LogsFolder"] ?? "./logs";
+var defaultLogsFolder = configuration["FileSystem:LogsFolder"] ?? configuration["LogAnalysis:LogsFolder"] ?? "./logs";
 var logSourceType = configuration["LogAnalysis:Source"] ?? "FileSystem";
 var minLevel = configuration["LogAnalysis:MinLevel"] ?? "Error";
+var maxConcurrency = int.TryParse(configuration["LogAnalysis:MaxConcurrency"], out var mc) && mc > 0 ? mc : 5;
 
 // Parse command line arguments (override config if provided)
 string targetRepo;
@@ -70,6 +71,11 @@ if (string.IsNullOrEmpty(githubToken))
 ILogSource logSource;
 string location;
 
+Console.WriteLine("Starting GitHub Copilot Logs Analyzer...");
+Console.WriteLine($"Log Source Type: {logSourceType}");
+Console.WriteLine($"Minimum Log Level: {minLevel}");
+Console.WriteLine($"GitHub Repository: {targetRepo}");
+
 if (logSourceType.Equals("EventHub", StringComparison.OrdinalIgnoreCase))
 {
     var fullyQualifiedNamespace = configuration["EventHub:FullyQualifiedNamespace"];
@@ -94,9 +100,12 @@ if (logSourceType.Equals("EventHub", StringComparison.OrdinalIgnoreCase))
 }
 else
 {
-    logSource = new FileSystemLogSource();
+    var supportedExtensions = configuration["FileSystem:SupportedExtensions"] ?
+        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .ToArray() ?? new[] { ".log", ".txt" };
+    logSource = new FileSystemLogSource(supportedExtensions);
     location = logsFolder;
-    Console.WriteLine($"Scanning logs in: {logsFolder}");
+    Console.WriteLine($"Scanning logs in: {logsFolder} (supported extensions: {string.Join(", ", supportedExtensions)})");
 }
 
 // Support graceful shutdown via Ctrl+C
@@ -112,109 +121,41 @@ Console.CancelKeyPress += (_, e) =>
 await using var client = new CopilotClient();
 await client.StartAsync();
 
-var systemPrompt = $"""
-    You are a log analysis assistant. Your task is to:
-    1. Analyze the provided log entries for issues at "{minLevel}" level and above
-    2. For each distinct issue found, create a GitHub issue in the repository: {targetRepo}
-    3. Before creating an issue, check if a similar issue already exists to avoid duplicates
-    
-    Severity levels (lowest to highest): Trace, Debug, Information, Warning, Error, Critical/Fatal.
-    Only report entries at "{minLevel}" level or above. Ignore anything below that threshold.
-    Log format may vary, but look for common patterns like severity keywords, "exception", stack traces, or other indicators of problems.
-    Focus on actionable insights that can help developers identify and fix issues.
-
-    When creating issues:
-    - Use a clear, descriptive title summarizing the error
-    - Include the error message, stack trace (if available), and file name in the body
-    - Add the label "bug" if possible
-    - Group related errors into a single issue
-    
-    Repository: {targetRepo}
-    """;
-
-// Create session with GitHub MCP server
 var model = configuration["GitHub:Model"] ?? "gpt-4o";
-await using var session = await client.CreateSessionAsync(new SessionConfig
-{
-    Model = model,
-    SystemMessage = new SystemMessageConfig
-    {
-        Mode = SystemMessageMode.Append,
-        Content = systemPrompt
-    },
-    McpServers = new Dictionary<string, object>
-    {
-        ["github"] = new McpRemoteServerConfig
-        {
-            Type = "http",
-            Url = "https://api.githubcopilot.com/mcp/",
-            Headers = new Dictionary<string, string>
-            {
-                ["Authorization"] = $"Bearer {githubToken}"
-            },
-            Tools = ["*"]
-        }
-    },
-    OnPermissionRequest = PermissionHandler.ApproveAll
-});
+var processor = new LogEntryProcessor(client, targetRepo, minLevel, githubToken, model);
 
-Console.WriteLine("\nAnalyzing logs and creating issues...\n");
+Console.WriteLine("\nStarting log analysis with model: " + model);
+Console.WriteLine($"\nAnalyzing logs and creating issues (max concurrency: {maxConcurrency})...\n");
 
 var issuesCreated = 0;
+var semaphore = new SemaphoreSlim(maxConcurrency);
+var tasks = new List<Task>();
 
-// Process log entries one at a time as they arrive
+// Process log entries in parallel, each with a dedicated Copilot session
 try
 {
     await foreach (var entry in logSource.GetLogsAsync(location, cts.Token))
     {
-        Console.WriteLine($"[{logSource.SourceName}] Processing: {entry.Name}");
+        Console.WriteLine($"[{logSource.SourceName}] Queued: {entry.Name}");
 
-        var userPrompt = $"""
-            Please analyze the following log entry for errors and create GitHub issues for any problems found:
-            
-            ### Source: {entry.Name} ({entry.SourceId})
-            ```
-            {entry.Content}
-            ```
-            """;
+        await semaphore.WaitAsync(cts.Token);
 
-        var done = new TaskCompletionSource();
-        session.On(evt =>
+        var capturedEntry = entry;
+        tasks.Add(Task.Run(async () =>
         {
-            switch (evt)
+            try
             {
-                case AssistantMessageEvent msg:
-                    Console.WriteLine(msg.Data.Content);
-                    break;
-                case ToolExecutionStartEvent toolStart:
-                    var toolName = toolStart.Data.ToolName ?? "";
-                    if (toolName.Contains("issue", StringComparison.OrdinalIgnoreCase))
-                    {
-                        Console.WriteLine($"  [Tool] {toolName}");
-                        if (toolName.Contains("create", StringComparison.OrdinalIgnoreCase) ||
-                            toolName.Contains("write", StringComparison.OrdinalIgnoreCase))
-                        {
-                            issuesCreated++;
-                        }
-                    }
-                    break;
-                case SessionIdleEvent:
-                    done.TrySetResult();
-                    break;
-                case SessionErrorEvent error:
-                    Console.Error.WriteLine($"Error: {error.Data.Message}");
-                    done.TrySetException(new Exception(error.Data.Message));
-                    break;
+                var count = await processor.ProcessAsync(capturedEntry, logSource.SourceName, cts.Token);
+                Interlocked.Add(ref issuesCreated, count);
             }
-        });
-
-        await session.SendAsync(new MessageOptions
-        {
-            Prompt = userPrompt
-        });
-
-        await done.Task;
+            finally
+            {
+                semaphore.Release();
+            }
+        }, cts.Token));
     }
+
+    await Task.WhenAll(tasks);
 }
 catch (OperationCanceledException) when (cts.IsCancellationRequested)
 {
