@@ -1,21 +1,26 @@
 # GitHub Copilot Logs Analyzer
 
-A .NET 10 console application that analyzes log files for errors and automatically creates GitHub issues using the GitHub Copilot SDK and GitHub MCP Server.
+> [!WARNING]
+> This project is experimental and under active development. Features may change without notice and the generated workflows should be reviewed carefully before use in production.
+
+A .NET 10 console application that ingests logs, analyzes them with the GitHub Copilot SDK, and creates GitHub issues through the GitHub MCP Server.
 
 ## Features
 
-- Scans a folder for `.log` and `.txt` files
-- Uses GitHub Copilot SDK with AI-powered analysis to identify errors, exceptions, and critical issues
-- Automatically creates GitHub issues via the GitHub MCP Server
-- Checks for duplicate issues before creating new ones
-- Supports configuration via `appsettings.json`, environment variables, or command-line arguments
+- Supports multiple log sources:
+  - `FileSystem`: scans `.log` and `.txt` files from a folder
+  - `EventHub`: continuously reads events from Azure Event Hubs
+- Uses AI-powered analysis to identify errors, exceptions, and critical issues
+- Automatically creates GitHub issues and attempts to avoid duplicates
+- Configurable through `appsettings*.json`, environment variables, and CLI args
 
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed and in PATH
+- [GitHub Copilot CLI](https://docs.github.com/en/copilot/github-copilot-in-the-cli) installed and available in `PATH`
 - GitHub Copilot subscription
 - GitHub Personal Access Token (PAT) with `repo` scope
+- For Event Hub mode: an Azure Event Hubs namespace and hub, plus an identity with the **Azure Event Hubs Data Receiver** role (uses `DefaultAzureCredential` — Azure CLI, managed identity, VS login, etc.)
 
 ## Installation
 
@@ -23,11 +28,10 @@ A .NET 10 console application that analyzes log files for errors and automatical
 git clone https://github.com/Frank802/ghcp-logs-analyzer.git
 cd ghcp-logs-analyzer/src
 dotnet restore
+dotnet build
 ```
 
 ## Configuration
-
-### Option 1: appsettings.Local.json (Recommended)
 
 Create `src/appsettings.Local.json` (git-ignored):
 
@@ -38,51 +42,70 @@ Create `src/appsettings.Local.json` (git-ignored):
     "TargetRepository": "owner/repo"
   },
   "LogAnalysis": {
-    "LogsFolder": "./logs",
-    "SupportedExtensions": [ ".log", ".txt" ]
+    "Source": "FileSystem",
+    "LogsFolder": "../sample-logs",
+    "SupportedExtensions": [".log", ".txt"]
+  },
+  "EventHub": {
+    "FullyQualifiedNamespace": "<namespace>.servicebus.windows.net",
+    "EventHubName": "my-event-hub",
+    "ConsumerGroup": "$Default",
+    "StartFromEarliest": false
   }
 }
 ```
 
-### Option 2: Environment Variable
+### Source Selection
+
+- Set `LogAnalysis:Source` to `FileSystem` for folder scanning
+- Set `LogAnalysis:Source` to `EventHub` for continuous Event Hub ingestion
+
+### Environment Variables
 
 ```powershell
 $env:GITHUB_TOKEN = "ghp_your_personal_access_token"
+$env:GITHUB_TARGET_REPOSITORY = "owner/repo"
 ```
 
 ## Usage
 
 ```bash
-# Run from the src folder
+# Run from src/
 cd src
 
-# Using config file
+# Use config values
 dotnet run
 
-# Override with command-line arguments
+# Override target repo and logs folder (FileSystem mode)
 dotnet run -- <owner/repo> [logs-folder]
 
-# Example
+# Example (FileSystem)
 dotnet run -- Frank802/my-app ../sample-logs
 ```
 
+Notes:
+
+- In `FileSystem` mode, the optional second CLI argument is the folder path.
+- In `EventHub` mode, hub settings are read from `EventHub:*` configuration.
+- `EventHub` mode runs continuously until interrupted (Ctrl+C).
+
 ## Configuration Priority
 
-1. Command-line arguments (highest)
+1. Command-line arguments
 2. `appsettings.Local.json`
 3. `appsettings.json`
 4. Environment variables (`GITHUB_TOKEN`, `GITHUB_TARGET_REPOSITORY`)
 
 ## Running with Docker
 
-### Build the Image
+### Build
 
 ```bash
 cd src
 docker build -t ghcp-logs-analyzer .
 ```
 
-### Run the Container
+### Run (FileSystem source)
 
 ```bash
 docker run --rm \
@@ -90,55 +113,43 @@ docker run --rm \
   -v ~/.config/github-copilot:/root/.config/github-copilot:ro \
   -e GITHUB_TOKEN=ghp_your_personal_access_token \
   -e GITHUB_TARGET_REPOSITORY=owner/repo \
-  ghcp-logs-analyzer
+  ghcp-logs-analyzer owner/repo /logs
 ```
 
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `GITHUB_TOKEN` | Yes | GitHub PAT with `repo` scope |
-| `GITHUB_TARGET_REPOSITORY` | Yes | Target repository (e.g., `owner/repo`) |
-
-### Volume Mounts
-
-| Host Path | Container Path | Purpose |
-|-----------|----------------|---------|
-| `/path/to/your/logs` | `/logs` | Log files to analyze |
-| `~/.config/github-copilot` | `/root/.config/github-copilot` | Copilot CLI credentials (read-only) |
-
-### Example with Command-Line Arguments
+### Run (EventHub source)
 
 ```bash
 docker run --rm \
-  -v /path/to/logs:/logs \
   -v ~/.config/github-copilot:/root/.config/github-copilot:ro \
-  -e GITHUB_TOKEN=ghp_your_token \
-  ghcp-logs-analyzer Frank802/my-app /logs
+  -e GITHUB_TOKEN=ghp_your_personal_access_token \
+  -e GITHUB_TARGET_REPOSITORY=owner/repo \
+  -e LogAnalysis__Source=EventHub \
+  -e EventHub__FullyQualifiedNamespace="<namespace>.servicebus.windows.net" \
+  -e EventHub__EventHubName="my-event-hub" \
+  ghcp-logs-analyzer
 ```
-
-> **Note**: You must authenticate the GitHub Copilot CLI on your host machine first (`github-copilot auth`), then mount the credentials into the container.
 
 ## How It Works
 
-1. **Scan**: Reads all `.log` and `.txt` files from the specified folder
-2. **Analyze**: Sends log contents to GitHub Copilot SDK with a system prompt for error analysis
-3. **Create Issues**: Uses the GitHub MCP Server's `create_issue` tool to create issues for each distinct error found
-4. **Deduplicate**: AI checks for existing similar issues before creating new ones
+1. Reads logs from the configured source (`FileSystem` or `EventHub`)
+2. Sends each log entry to a Copilot session with analysis instructions
+3. Uses GitHub MCP tools to find/create issues in the target repository
+4. Streams output and tool activity to the console
 
 ## Project Structure
 
 ```
 ghcp-logs-analyzer/
 ├── src/
-│   ├── Program.cs              # Main entry point with Copilot SDK integration
-│   ├── LogScanner.cs           # Log file enumeration service
+│   ├── Program.cs              # App entry point and source selection
+│   ├── ILogSource.cs           # Log source abstraction + LogEntry record
+│   ├── FileSystemLogSource.cs  # Local file-based log source
+│   ├── EventHubLogSource.cs    # Azure Event Hubs log source
 │   ├── appsettings.json        # Default configuration template
-│   ├── appsettings.Local.json  # Local secrets (git-ignored)
-│   ├── Dockerfile              # Docker container definition
-│   ├── .dockerignore           # Docker build exclusions
+│   ├── appsettings.Local.json  # Local secrets/config (git-ignored)
+│   ├── Dockerfile              # Docker image definition
 │   └── GhcpLogsAnalyzer.csproj # Project file
-├── sample-logs/                # Sample log files for testing
+├── sample-logs/                # Sample file logs for testing
 └── README.md
 ```
 

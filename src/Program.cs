@@ -23,6 +23,8 @@ if(string.IsNullOrEmpty(defaultRepo) || defaultRepo == "owner/repo")
 }
 
 var defaultLogsFolder = configuration["LogAnalysis:LogsFolder"] ?? "./logs";
+var logSourceType = configuration["LogAnalysis:Source"] ?? "FileSystem";
+var minLevel = configuration["LogAnalysis:MinLevel"] ?? "Error";
 
 // Parse command line arguments (override config if provided)
 string targetRepo;
@@ -64,43 +66,63 @@ if (string.IsNullOrEmpty(githubToken))
     return 1;
 }
 
-// Scan log files
-Console.WriteLine($"Scanning logs in: {logsFolder}");
-ILogSource logSource = new FileSystemLogSource();
-List<LogEntry> logEntries;
+// Build the log source and determine the location
+ILogSource logSource;
+string location;
 
-try
+if (logSourceType.Equals("EventHub", StringComparison.OrdinalIgnoreCase))
 {
-    logEntries = await logSource.GetLogsAsync(logsFolder).ToListAsync();
+    var fullyQualifiedNamespace = configuration["EventHub:FullyQualifiedNamespace"];
+    var eventHubName = configuration["EventHub:EventHubName"];
+    var consumerGroup = configuration["EventHub:ConsumerGroup"] ?? "$Default";
+    var startFromEarliest = bool.TryParse(configuration["EventHub:StartFromEarliest"], out var earliest) && earliest;
+
+    if (string.IsNullOrEmpty(fullyQualifiedNamespace))
+    {
+        Console.Error.WriteLine("Error: EventHub:FullyQualifiedNamespace is required when LogAnalysis:Source is EventHub.");
+        return 1;
+    }
+    if (string.IsNullOrEmpty(eventHubName))
+    {
+        Console.Error.WriteLine("Error: EventHub:EventHubName is required when LogAnalysis:Source is EventHub.");
+        return 1;
+    }
+
+    logSource = new EventHubLogSource(fullyQualifiedNamespace, consumerGroup, startFromEarliest);
+    location = eventHubName;
+    Console.WriteLine($"Listening for events on Event Hub: {fullyQualifiedNamespace}/{eventHubName} (consumer group: {consumerGroup})");
 }
-catch (DirectoryNotFoundException ex)
+else
 {
-    Console.Error.WriteLine($"Error: {ex.Message}");
-    return 1;
+    logSource = new FileSystemLogSource();
+    location = logsFolder;
+    Console.WriteLine($"Scanning logs in: {logsFolder}");
 }
 
-if (logEntries.Count == 0)
+// Support graceful shutdown via Ctrl+C
+using var cts = new CancellationTokenSource();
+Console.CancelKeyPress += (_, e) =>
 {
-    Console.WriteLine("No log files found (.log, .txt)");
-    return 0;
-}
-
-Console.WriteLine($"Found {logEntries.Count} log file(s)");
+    e.Cancel = true;
+    cts.Cancel();
+    Console.WriteLine("\nShutting down...");
+};
 
 // Initialize Copilot client
 await using var client = new CopilotClient();
 await client.StartAsync();
 
-// Build the analysis prompt with all log contents
-var logContents = string.Join("\n\n---\n\n", logEntries.Select(l =>
-    $"### File: {l.Name}\n```\n{l.Content}\n```"));
-
 var systemPrompt = $"""
     You are a log analysis assistant. Your task is to:
-    1. Analyze the provided log files for errors, exceptions, and critical issues
-    2. For each distinct error found, create a GitHub issue in the repository: {targetRepo}
+    1. Analyze the provided log entries for issues at "{minLevel}" level and above
+    2. For each distinct issue found, create a GitHub issue in the repository: {targetRepo}
     3. Before creating an issue, check if a similar issue already exists to avoid duplicates
     
+    Severity levels (lowest to highest): Trace, Debug, Information, Warning, Error, Critical/Fatal.
+    Only report entries at "{minLevel}" level or above. Ignore anything below that threshold.
+    Log format may vary, but look for common patterns like severity keywords, "exception", stack traces, or other indicators of problems.
+    Focus on actionable insights that can help developers identify and fix issues.
+
     When creating issues:
     - Use a clear, descriptive title summarizing the error
     - Include the error message, stack trace (if available), and file name in the body
@@ -110,16 +132,11 @@ var systemPrompt = $"""
     Repository: {targetRepo}
     """;
 
-var userPrompt = $"""
-    Please analyze the following log files for errors and create GitHub issues for any problems found:
-    
-    {logContents}
-    """;
-
 // Create session with GitHub MCP server
+var model = configuration["GitHub:Model"] ?? "gpt-4o";
 await using var session = await client.CreateSessionAsync(new SessionConfig
 {
-    Model = "gpt-4o",
+    Model = model,
     SystemMessage = new SystemMessageConfig
     {
         Mode = SystemMessageMode.Append,
@@ -137,53 +154,77 @@ await using var session = await client.CreateSessionAsync(new SessionConfig
             },
             Tools = ["*"]
         }
-    }
+    },
+    OnPermissionRequest = PermissionHandler.ApproveAll
 });
 
 Console.WriteLine("\nAnalyzing logs and creating issues...\n");
 
-// Track completion
-var done = new TaskCompletionSource();
 var issuesCreated = 0;
 
-// Subscribe to session events
-session.On(evt =>
+// Process log entries one at a time as they arrive
+try
 {
-    switch (evt)
+    await foreach (var entry in logSource.GetLogsAsync(location, cts.Token))
     {
-        case AssistantMessageEvent msg:
-            Console.WriteLine(msg.Data.Content);
-            break;
-        case ToolExecutionStartEvent toolStart:
-            var toolName = toolStart.Data.ToolName ?? "";
-            if (toolName.Contains("issue", StringComparison.OrdinalIgnoreCase))
+        Console.WriteLine($"[{logSource.SourceName}] Processing: {entry.Name}");
+
+        var userPrompt = $"""
+            Please analyze the following log entry for errors and create GitHub issues for any problems found:
+            
+            ### Source: {entry.Name} ({entry.SourceId})
+            ```
+            {entry.Content}
+            ```
+            """;
+
+        var done = new TaskCompletionSource();
+        session.On(evt =>
+        {
+            switch (evt)
             {
-                Console.WriteLine($"  [Tool] {toolName}");
-                if (toolName.Contains("create", StringComparison.OrdinalIgnoreCase) ||
-                    toolName.Contains("write", StringComparison.OrdinalIgnoreCase))
-                {
-                    issuesCreated++;
-                }
+                case AssistantMessageEvent msg:
+                    Console.WriteLine(msg.Data.Content);
+                    break;
+                case ToolExecutionStartEvent toolStart:
+                    var toolName = toolStart.Data.ToolName ?? "";
+                    if (toolName.Contains("issue", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"  [Tool] {toolName}");
+                        if (toolName.Contains("create", StringComparison.OrdinalIgnoreCase) ||
+                            toolName.Contains("write", StringComparison.OrdinalIgnoreCase))
+                        {
+                            issuesCreated++;
+                        }
+                    }
+                    break;
+                case SessionIdleEvent:
+                    done.TrySetResult();
+                    break;
+                case SessionErrorEvent error:
+                    Console.Error.WriteLine($"Error: {error.Data.Message}");
+                    done.TrySetException(new Exception(error.Data.Message));
+                    break;
             }
-            break;
-        case SessionIdleEvent:
-            done.TrySetResult();
-            break;
-        case SessionErrorEvent error:
-            Console.Error.WriteLine($"Error: {error.Data.Message}");
-            done.TrySetException(new Exception(error.Data.Message));
-            break;
+        });
+
+        await session.SendAsync(new MessageOptions
+        {
+            Prompt = userPrompt
+        });
+
+        await done.Task;
     }
-});
-
-// Send the analysis request
-await session.SendAsync(new MessageOptions
+}
+catch (OperationCanceledException) when (cts.IsCancellationRequested)
 {
-    Prompt = userPrompt
-});
-
-// Wait for completion
-await done.Task;
+    // Graceful shutdown via Ctrl+C
+}
+catch (DirectoryNotFoundException ex)
+{
+    Console.Error.WriteLine($"Error: {ex.Message}");
+    return 1;
+}
 
 Console.WriteLine($"\nDone! Created {issuesCreated} issue(s).");
 return 0;
