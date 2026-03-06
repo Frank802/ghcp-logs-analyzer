@@ -39,10 +39,15 @@ Create `src/appsettings.Local.json` (git-ignored):
 {
   "GitHub": {
     "Token": "ghp_your_personal_access_token",
-    "TargetRepository": "owner/repo"
+    "TargetRepository": "owner/repo",
+    "Model": "claude-sonnet-4.5"
   },
   "LogAnalysis": {
     "Source": "FileSystem",
+    "MinLevel": "Error",
+    "MaxConcurrency": 5
+  },
+  "FileSystem": {
     "LogsFolder": "../sample-logs",
     "SupportedExtensions": [".log", ".txt"]
   },
@@ -59,6 +64,16 @@ Create `src/appsettings.Local.json` (git-ignored):
 
 - Set `LogAnalysis:Source` to `FileSystem` for folder scanning
 - Set `LogAnalysis:Source` to `EventHub` for continuous Event Hub ingestion
+
+### Key Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `GitHub:Model` | `claude-sonnet-4.5` | AI model used for analysis |
+| `LogAnalysis:MinLevel` | `Error` | Minimum severity to report (`Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`) |
+| `LogAnalysis:MaxConcurrency` | `5` | Maximum number of log entries processed in parallel |
+| `FileSystem:LogsFolder` | `./logs` | Folder to scan in `FileSystem` mode |
+| `FileSystem:SupportedExtensions` | `.log,.txt` | Comma-separated file extensions to scan |
 
 ### Environment Variables
 
@@ -92,9 +107,9 @@ Notes:
 ## Configuration Priority
 
 1. Command-line arguments
-2. `appsettings.Local.json`
-3. `appsettings.json`
-4. Environment variables (`GITHUB_TOKEN`, `GITHUB_TARGET_REPOSITORY`)
+2. Environment variables (`GITHUB_TOKEN`, `GITHUB_TARGET_REPOSITORY`)
+3. `appsettings.Local.json`
+4. `appsettings.json`
 
 ## Running with Docker
 
@@ -132,9 +147,10 @@ docker run --rm \
 ## How It Works
 
 1. Reads logs from the configured source (`FileSystem` or `EventHub`)
-2. Sends each log entry to a Copilot session with analysis instructions
-3. Uses GitHub MCP tools to find/create issues in the target repository
-4. Streams output and tool activity to the console
+2. Filters entries to the configured minimum severity level (`LogAnalysis:MinLevel`)
+3. Dispatches each log entry to a dedicated Copilot session, up to `MaxConcurrency` in parallel
+4. Each session analyzes the entry, checks for duplicate issues, then creates a GitHub issue via the GitHub MCP Server
+5. Streams assistant output and tool activity to the console
 
 ## Project Structure
 
@@ -145,6 +161,7 @@ ghcp-logs-analyzer/
 │   ├── ILogSource.cs           # Log source abstraction + LogEntry record
 │   ├── FileSystemLogSource.cs  # Local file-based log source
 │   ├── EventHubLogSource.cs    # Azure Event Hubs log source
+│   ├── LogEntryProcessor.cs    # Per-entry Copilot session + issue creation
 │   ├── appsettings.json        # Default configuration template
 │   ├── appsettings.Local.json  # Local secrets/config (git-ignored)
 │   ├── Dockerfile              # Docker image definition
