@@ -14,6 +14,51 @@ A .NET 10 console application that ingests logs, analyzes them with the GitHub C
 - Automatically creates GitHub issues and attempts to avoid duplicates
 - Configurable through `appsettings*.json`, environment variables, and CLI args
 
+## Architecture
+
+```mermaid
+flowchart TD
+    subgraph cfg["Configuration"]
+        C1["CLI Args"]
+        C2["Env Vars\n(GITHUB_TOKEN, GITHUB_TARGET_REPOSITORY)"]
+        C3["appsettings.Local.json\nappsettings.json"]
+    end
+
+    subgraph sources["Log Sources"]
+        S1["FileSystemLogSource\n(.log / .txt files)"]
+        S2["EventHubLogSource\n(Azure Event Hubs — continuous)"]
+    end
+
+    subgraph app["ghcp-logs-analyzer (Program.cs)"]
+        P["ILogSource\n(selected by LogAnalysis:Source)"]
+        Q["SemaphoreSlim\n(MaxConcurrency gate)"]
+        R["LogEntryProcessor\n× N parallel tasks"]
+    end
+
+    subgraph copilot["GitHub Copilot SDK"]
+        D["CopilotClient"]
+        E["Session per LogEntry\n(Model: claude-sonnet-4.5)"]
+    end
+
+    subgraph mcp["GitHub MCP Server\napi.githubcopilot.com/mcp/"]
+        M1["search_issues\n(deduplication check)"]
+        M2["create_issue"]
+    end
+
+    GH[("GitHub Repository")]
+    CON["Console Output"]
+
+    cfg -->|configure| app
+    S1 -->|LogEntry stream| P
+    S2 -->|LogEntry stream| P
+    P --> Q --> R
+    R --> D --> E
+    E <-->|Bearer token / HTTP| mcp
+    M1 --> GH
+    M2 --> GH
+    E -->|AssistantMessageEvent\nToolExecutionStartEvent| CON
+```
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
