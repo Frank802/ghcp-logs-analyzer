@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GitHub Copilot Logs Analyzer — AI-powered log triage</title>
+  <meta name="description" content="A .NET 10 console app that ingests logs, analyzes them with the GitHub Copilot SDK, and automatically opens GitHub issues via the GitHub MCP Server." />
+  <meta property="og:title" content="GitHub Copilot Logs Analyzer" />
+  <meta property="og:description" content="AI-powered log triage that turns errors into deduplicated GitHub issues — automatically." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://frank802.github.io/ghcp-logs-analyzer/" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🤖%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero">
+    <nav class="nav">
+      <a class="brand" href="#top">🤖 ghcp-logs-analyzer</a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="https://github.com/Frank802/ghcp-logs-analyzer" target="_blank" rel="noopener">GitHub ↗</a>
+      </div>
+    </nav>
+
+    <div class="hero-inner" id="top">
+      <span class="badge">Experimental · .NET 10 · MIT</span>
+      <h1>Turn noisy logs into <span class="grad">actionable GitHub issues</span> — automatically.</h1>
+      <p class="lede">
+        A .NET 10 console app that ingests logs from files or Azure Event Hubs, analyzes them with the
+        <strong>GitHub Copilot SDK</strong>, and opens deduplicated GitHub issues through the
+        <strong>GitHub MCP Server</strong>.
+      </p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/Frank802/ghcp-logs-analyzer" target="_blank" rel="noopener">View on GitHub</a>
+        <a class="btn ghost" href="#quickstart">Get started →</a>
+      </div>
+      <pre class="hero-code"><code><span class="c">$</span> dotnet run -- Frank802/my-app ./logs
+<span class="dim">→ Scanning logs… 14 entries above Error</span>
+<span class="dim">→ Copilot session opened (claude-sonnet-4.5)</span>
+<span class="ok">✓ Created issue #128 — NullReferenceException in OrderService</span>
+<span class="ok">✓ Deduplicated — matches existing #112</span></code></pre>
+    </div>
+  </header>
+
+  <section id="features" class="section">
+    <h2>Why you'll like it</h2>
+    <div class="grid">
+      <div class="card">
+        <div class="icon">🧠</div>
+        <h3>AI-powered triage</h3>
+        <p>Each log entry gets its own Copilot session that identifies errors, exceptions, and root causes — not just regex matches.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🔁</div>
+        <h3>Automatic deduplication</h3>
+        <p>Searches existing issues via the GitHub MCP Server before opening anything new, so your tracker stays clean.</p>
+      </div>
+      <div class="card">
+        <div class="icon">📡</div>
+        <h3>Pluggable sources</h3>
+        <p>Read from local <code>.log</code>/<code>.txt</code> files or stream continuously from Azure Event Hubs.</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚡</div>
+        <h3>Parallel by default</h3>
+        <p>A configurable concurrency gate processes multiple log entries simultaneously without hammering the API.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🛠️</div>
+        <h3>Configurable everywhere</h3>
+        <p>Layered config: CLI args → environment variables → <code>appsettings.Local.json</code> → <code>appsettings.json</code>.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🐳</div>
+        <h3>Docker-ready</h3>
+        <p>Ship it in a container with the Copilot CLI preinstalled. One <code>docker run</code> and you're triaging.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how" class="section alt">
+    <h2>How it works</h2>
+    <ol class="steps">
+      <li><span>1</span><div><strong>Ingest</strong><p>Logs are read from the configured source (filesystem or Event Hub) and filtered to your minimum severity.</p></div></li>
+      <li><span>2</span><div><strong>Analyze</strong><p>Each entry is dispatched to a dedicated Copilot session with a tailored system prompt.</p></div></li>
+      <li><span>3</span><div><strong>Deduplicate</strong><p>The session calls <code>search_issues</code> on the GitHub MCP Server to avoid filing duplicates.</p></div></li>
+      <li><span>4</span><div><strong>File</strong><p>If unique, <code>create_issue</code> opens a well-structured issue in your target repository.</p></div></li>
+    </ol>
+  </section>
+
+  <section id="quickstart" class="section">
+    <h2>Quickstart</h2>
+    <div class="qs">
+      <div>
+        <h3>Prerequisites</h3>
+        <ul>
+          <li>.NET 10 SDK</li>
+          <li>GitHub Copilot CLI on <code>PATH</code></li>
+          <li>Active GitHub Copilot subscription</li>
+          <li>GitHub PAT with <code>repo</code> scope</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Run it</h3>
+        <pre><code>git clone https://github.com/Frank802/ghcp-logs-analyzer.git
+cd ghcp-logs-analyzer/src
+dotnet restore &amp;&amp; dotnet build
+
+# point it at your repo + a folder of logs
+dotnet run -- owner/repo ../sample-logs</code></pre>
+      </div>
+    </div>
+
+    <p class="docs-link">
+      Full configuration, Docker instructions, and architecture diagram live in the
+      <a href="https://github.com/Frank802/ghcp-logs-analyzer#readme" target="_blank" rel="noopener">project README</a>.
+    </p>
+  </section>
+
+  <footer class="footer">
+    <p>
+      Built with the <a href="https://docs.github.com/en/copilot" target="_blank" rel="noopener">GitHub Copilot SDK</a> &amp;
+      <a href="https://github.com/github/github-mcp-server" target="_blank" rel="noopener">GitHub MCP Server</a>.
+      Released under the MIT License.
+    </p>
+    <p>
+      <a href="https://github.com/Frank802/ghcp-logs-analyzer">github.com/Frank802/ghcp-logs-analyzer</a>
+    </p>
+  </footer>
+</body>
+</html>

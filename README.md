@@ -5,6 +5,8 @@
 
 A .NET 10 console application that ingests logs, analyzes them with the GitHub Copilot SDK, and creates GitHub issues through the GitHub MCP Server.
 
+🌐 **[Visit the project website →](https://frank802.github.io/ghcp-logs-analyzer/)**
+
 ## Features
 
 - Supports multiple log sources:
